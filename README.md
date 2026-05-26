@@ -38,13 +38,10 @@
 
 ### 编译运行
 
-**方式一：直接使用 GCC**
-```bash
-gcc phonebook.c -o phonebook -fexec-charset=GBK
-./phonebook
+#### 方法一：直接使用
 
-**方式二：使用Makefile**
-```bash
-make          # 编译
-make run      # 编译并运行
-make clean    # 清理编译产物
+#### 方法二：使用 Makefile
+
+
+
+
