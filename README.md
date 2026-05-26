@@ -42,6 +42,7 @@
 ```bash
 gcc phonebook.c -o phonebook -fexec-charset=GBK
 ./phonebook
+
 **方式二：使用Makefile**
 ```bash
 make          # 编译
