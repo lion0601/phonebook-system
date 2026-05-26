@@ -1,0 +1,16 @@
+# 编译产物
+*.exe
+*.o
+*.obj
+
+# 数据文件
+*.dat
+*.log
+
+# 导出文件
+*.csv
+!import.csv
+
+# IDE
+.vscode/
+*.suo

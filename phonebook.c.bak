@@ -1,0 +1,560 @@
+/*
+ * 电话号码簿管理系统 - 链表版
+ * 编译：gcc phonebook.c -o phonebook -fexec-charset=GBK
+ * 运行：.\phonebook.exe
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <ctype.h>
+#include <errno.h>
+
+typedef struct {
+    char dataFile[100];
+    char logFile[100];
+    int maxNameLen;
+    int maxPhoneLen;
+    int maxAddrLen;
+    int pageSize;
+} Config;
+
+Config config = {
+    "phonebook.dat",
+    "phonebook.log",
+    50, 20, 100, 5
+};
+
+typedef struct ContactNode {
+    char name[50];
+    char phone[20];
+    char address[100];
+    struct ContactNode *next;
+} ContactNode;
+
+ContactNode *head = NULL;
+int contactCount = 0;
+
+void loadConfig();
+void saveDefaultConfig();
+void writeLog(const char *operation, const char *detail);
+void writeLogSimple(const char *operation, int count);
+char* getCurrentTime();
+int isValidPhone(const char *phone);
+void trimNewline(char *str);
+void pressAnyKey();
+void clearScreen();
+ContactNode* createNode(const char *name, const char *phone, const char *address);
+void insertSorted(const char *name, const char *phone, const char *address);
+ContactNode* searchByName(const char *name);
+void searchContact();
+int deleteContact(const char *name);
+void deleteContactUI();
+void displayAll();
+void addContact();
+void loadFromFile();
+void saveToFile();
+void freeList();
+void exportToCSV();
+void displaySorted(int sortType);
+void batchImport();
+
+void loadConfig() {
+    FILE *fp = fopen("phonebook.ini", "r");
+    if (!fp) {
+        saveDefaultConfig();
+        return;
+    }
+    char line[256];
+    while (fgets(line, sizeof(line), fp)) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        char key[50], value[200];
+        if (sscanf(line, "%[^=]=%s", key, value) == 2) {
+            if (strcmp(key, "data_file") == 0) strcpy(config.dataFile, value);
+            else if (strcmp(key, "log_file") == 0) strcpy(config.logFile, value);
+            else if (strcmp(key, "max_name_len") == 0) config.maxNameLen = atoi(value);
+            else if (strcmp(key, "max_phone_len") == 0) config.maxPhoneLen = atoi(value);
+            else if (strcmp(key, "max_addr_len") == 0) config.maxAddrLen = atoi(value);
+            else if (strcmp(key, "page_size") == 0) config.pageSize = atoi(value);
+        }
+    }
+    fclose(fp);
+}
+
+void saveDefaultConfig() {
+    FILE *fp = fopen("phonebook.ini", "w");
+    if (!fp) return;
+    fprintf(fp, "# Phonebook Config\n");
+    fprintf(fp, "data_file=phonebook.dat\n");
+    fprintf(fp, "log_file=phonebook.log\n");
+    fprintf(fp, "max_name_len=50\n");
+    fprintf(fp, "max_phone_len=20\n");
+    fprintf(fp, "max_addr_len=100\n");
+    fprintf(fp, "page_size=5\n");
+    fclose(fp);
+}
+
+char* getCurrentTime() {
+    static char timeStr[30];
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    sprintf(timeStr, "%04d-%02d-%02d %02d:%02d:%02d",
+            t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
+            t->tm_hour, t->tm_min, t->tm_sec);
+    return timeStr;
+}
+
+void writeLog(const char *operation, const char *detail) {
+    FILE *fp = fopen(config.logFile, "a");
+    if (!fp) return;
+    fprintf(fp, "[%s] %s: %s\n", getCurrentTime(), operation, detail);
+    fclose(fp);
+}
+
+void writeLogSimple(const char *operation, int count) {
+    char detail[100];
+    sprintf(detail, "Count: %d", count);
+    writeLog(operation, detail);
+}
+
+int isValidPhone(const char *phone) {
+    for (int i = 0; phone[i]; i++) {
+        char c = phone[i];
+        if (!(isdigit(c) || c == '+' || c == '-' || c == '(' || c == ')' || c == ' ')) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+void trimNewline(char *str) {
+    size_t len = strlen(str);
+    if (len > 0 && str[len-1] == '\n') str[len-1] = '\0';
+}
+
+void pressAnyKey() {
+    printf("\nPress any key to continue...");
+    getchar();
+    getchar();
+}
+
+void clearScreen() {
+    system("cls");
+}
+
+ContactNode* createNode(const char *name, const char *phone, const char *address) {
+    ContactNode *newNode = (ContactNode*)malloc(sizeof(ContactNode));
+    if (!newNode) {
+        printf("Memory allocation failed!\n");
+        return NULL;
+    }
+    strcpy(newNode->name, name);
+    strcpy(newNode->phone, phone);
+    strcpy(newNode->address, address);
+    newNode->next = NULL;
+    return newNode;
+}
+
+void insertSorted(const char *name, const char *phone, const char *address) {
+    ContactNode *newNode = createNode(name, phone, address);
+    if (!newNode) return;
+    if (head == NULL || strcmp(name, head->name) < 0) {
+        newNode->next = head;
+        head = newNode;
+        contactCount++;
+        return;
+    }
+    ContactNode *curr = head;
+    while (curr->next && strcmp(name, curr->next->name) > 0) {
+        curr = curr->next;
+    }
+    newNode->next = curr->next;
+    curr->next = newNode;
+    contactCount++;
+}
+
+ContactNode* searchByName(const char *name) {
+    ContactNode *curr = head;
+    while (curr) {
+        if (strcmp(curr->name, name) == 0) return curr;
+        curr = curr->next;
+    }
+    return NULL;
+}
+
+int deleteContact(const char *name) {
+    ContactNode *curr = head;
+    ContactNode *prev = NULL;
+    while (curr) {
+        if (strcmp(curr->name, name) == 0) {
+            if (prev) prev->next = curr->next;
+            else head = curr->next;
+            free(curr);
+            contactCount--;
+            return 1;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+    return 0;
+}
+
+void fuzzySearch(const char *keyword) {
+    ContactNode *curr = head;
+    int found = 0, index = 1;
+    printf("\n========== Fuzzy Search ==========\n");
+    printf("Keyword: %s\n", keyword);
+    printf("-----------------------------------\n");
+    while (curr) {
+        if (strstr(curr->name, keyword) || strstr(curr->phone, keyword) || strstr(curr->address, keyword)) {
+            printf("%d. Name: %s\n", index++, curr->name);
+            printf("   Phone: %s\n", curr->phone);
+            printf("   Address: %s\n", curr->address);
+            printf("-----------------------------------\n");
+            found = 1;
+        }
+        curr = curr->next;
+    }
+    if (!found) printf("Not found!\n");
+    printf("Total: %d records\n", index - 1);
+}
+
+void displayAll() {
+    if (head == NULL) {
+        printf("\nPhonebook is empty!\n");
+        writeLog("Display", "Empty");
+        return;
+    }
+    ContactNode *curr = head;
+    int total = contactCount;
+    int pageSize = config.pageSize;
+    int totalPages = (total + pageSize - 1) / pageSize;
+    int currentPage = 1;
+    char input[10];
+    int jumpPage;
+    do {
+        clearScreen();
+        printf("========== Phonebook System ==========\n");
+        printf("Page %d / %d | Total: %d records\n", currentPage, totalPages, total);
+        printf("Page size: %d\n", pageSize);
+        printf("-----------------------------------\n");
+        int start = (currentPage - 1) * pageSize;
+        int index = 0, printed = 0;
+        curr = head;
+        while (curr && index < start) { curr = curr->next; index++; }
+        while (curr && printed < pageSize) {
+            printf("%d. %s\t%s\t%s\n", start + printed + 1, curr->name, curr->phone, curr->address);
+            curr = curr->next;
+            printed++;
+        }
+        printf("-----------------------------------\n");
+        printf("[N]Next [P]Prev [G]Go to page [Q]Quit\n");
+        printf("Enter: ");
+        scanf("%s", input);
+        switch (toupper(input[0])) {
+            case 'N': if (currentPage < totalPages) currentPage++; break;
+            case 'P': if (currentPage > 1) currentPage--; break;
+            case 'G': printf("Enter page (1-%d): ", totalPages); scanf("%d", &jumpPage);
+                      if (jumpPage >= 1 && jumpPage <= totalPages) currentPage = jumpPage; break;
+        }
+    } while (toupper(input[0]) != 'Q');
+    writeLogSimple("Display", total);
+}
+
+void addContact() {
+    char name[100], phone[100], address[200];
+    clearScreen();
+    printf("========== Add Contact ==========\n");
+    do {
+        printf("Name (required): ");
+        getchar();
+        fgets(name, sizeof(name), stdin);
+        trimNewline(name);
+        if (strlen(name) == 0) printf("Name cannot be empty!\n");
+    } while (strlen(name) == 0);
+    do {
+        printf("Phone (digits/+/-/()/space): ");
+        fgets(phone, sizeof(phone), stdin);
+        trimNewline(phone);
+        if (!isValidPhone(phone)) printf("Invalid phone format!\n");
+    } while (!isValidPhone(phone));
+    printf("Address (optional): ");
+    fgets(address, sizeof(address), stdin);
+    trimNewline(address);
+    if (searchByName(name)) {
+        printf("%s already exists!\n", name);
+        writeLog("Add failed", "Already exists");
+        pressAnyKey();
+        return;
+    }
+    insertSorted(name, phone, address);
+    printf("Added! Total: %d contacts\n", contactCount);
+    char logDetail[200];
+    sprintf(logDetail, "Name:%s Phone:%s", name, phone);
+    writeLog("Add contact", logDetail);
+    saveToFile();
+    pressAnyKey();
+}
+
+void searchContact() {
+    char keyword[100];
+    int choice;
+    clearScreen();
+    printf("========== Search Contact ==========\n");
+    printf("1. Exact search (by name)\n");
+    printf("2. Fuzzy search\n");
+    printf("Choice: ");
+    scanf("%d", &choice);
+    getchar();
+    if (choice == 1) {
+        printf("Enter name: ");
+        fgets(keyword, sizeof(keyword), stdin);
+        trimNewline(keyword);
+        ContactNode *contact = searchByName(keyword);
+        if (contact) {
+            printf("\n========== Result ==========\n");
+            printf("Name: %s\n", contact->name);
+            printf("Phone: %s\n", contact->phone);
+            printf("Address: %s\n", contact->address);
+            writeLog("Exact search", keyword);
+        } else {
+            printf("Not found: %s\n", keyword);
+            writeLog("Search failed", "Not found");
+        }
+    } else if (choice == 2) {
+        printf("Enter keyword: ");
+        fgets(keyword, sizeof(keyword), stdin);
+        trimNewline(keyword);
+        fuzzySearch(keyword);
+        writeLog("Fuzzy search", keyword);
+    }
+    pressAnyKey();
+}
+
+void deleteContactUI() {
+    char name[100];
+    clearScreen();
+    printf("========== Delete Contact ==========\n");
+    if (head == NULL) {
+        printf("Phonebook is empty!\n");
+        pressAnyKey();
+        return;
+    }
+    printf("Enter name to delete: ");
+    getchar();
+    fgets(name, sizeof(name), stdin);
+    trimNewline(name);
+    if (deleteContact(name)) {
+        printf("Deleted! Total: %d contacts\n", contactCount);
+        writeLog("Delete contact", name);
+        saveToFile();
+    } else {
+        printf("Not found: %s\n", name);
+        writeLog("Delete failed", "Not found");
+    }
+    pressAnyKey();
+}
+
+void exportToCSV() {
+    int choice;
+    printf("\n========== Export CSV ==========\n");
+    printf("1. Export all\n");
+    printf("2. Export first 10\n");
+    printf("3. Export first 20\n");
+    printf("Choice: ");
+    scanf("%d", &choice);
+    getchar();
+    int limit = 0;
+    switch (choice) {
+        case 1: limit = contactCount; break;
+        case 2: limit = (contactCount > 10) ? 10 : contactCount; break;
+        case 3: limit = (contactCount > 20) ? 20 : contactCount; break;
+        default: printf("Invalid!\n"); return;
+    }
+    FILE *csvFile = fopen("phonebook_export.csv", "w");
+    if (!csvFile) {
+        printf("Cannot create CSV file!\n");
+        return;
+    }
+    fprintf(csvFile, "\xEF\xBB\xBF");
+    fprintf(csvFile, "Name,Phone,Address\n");
+    ContactNode *curr = head;
+    int exported = 0;
+    while (curr && exported < limit) {
+        fprintf(csvFile, "\"%s\",\"\t%s\",\"%s\"\n", curr->name, curr->phone, curr->address);
+        curr = curr->next;
+        exported++;
+    }
+    fclose(csvFile);
+    printf("Exported %d contacts to phonebook_export.csv\n", exported);
+    writeLogSimple("Export CSV", exported);
+    pressAnyKey();
+}
+
+void displaySorted(int sortType) {
+    if (head == NULL) {
+        printf("\nPhonebook is empty!\n");
+        return;
+    }
+    ContactNode **arr = (ContactNode**)malloc(contactCount * sizeof(ContactNode*));
+    ContactNode *curr = head;
+    for (int i = 0; i < contactCount; i++) {
+        arr[i] = curr;
+        curr = curr->next;
+    }
+    for (int i = 0; i < contactCount - 1; i++) {
+        for (int j = 0; j < contactCount - i - 1; j++) {
+            int cmp = 0;
+            if (sortType == 1) cmp = strcmp(arr[j]->name, arr[j+1]->name);
+            else if (sortType == 2) cmp = strcmp(arr[j]->phone, arr[j+1]->phone);
+            else cmp = strcmp(arr[j]->address, arr[j+1]->address);
+            if (cmp > 0) {
+                ContactNode *temp = arr[j];
+                arr[j] = arr[j+1];
+                arr[j+1] = temp;
+            }
+        }
+    }
+    printf("\n========== Sorted Result ==========\n");
+    int displayCount = (contactCount < 20) ? contactCount : 20;
+    for (int i = 0; i < displayCount; i++) {
+        printf("%d. %s\t%s\t%s\n", i+1, arr[i]->name, arr[i]->phone, arr[i]->address);
+    }
+    if (contactCount > 20) printf("... Total %d, showing first 20\n", contactCount);
+    free(arr);
+}
+
+void batchImport() {
+    char filename[100];
+    clearScreen();
+    printf("========== Batch Import ==========\n");
+    printf("CSV file name (default: import.csv): ");
+    getchar();
+    fgets(filename, sizeof(filename), stdin);
+    trimNewline(filename);
+    if (strlen(filename) == 0) strcpy(filename, "import.csv");
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        printf("Cannot open file: %s\n", filename);
+        pressAnyKey();
+        return;
+    }
+    int ch = fgetc(fp);
+    if (ch != 0xEF) fseek(fp, 0, SEEK_SET);
+    else { fgetc(fp); fgetc(fp); }
+    char line[512];
+    fgets(line, sizeof(line), fp);
+    int successCount = 0, failCount = 0, lineNum = 1;
+    printf("\nImporting...\n");
+    while (fgets(line, sizeof(line), fp)) {
+        lineNum++;
+        trimNewline(line);
+        if (strlen(line) == 0) continue;
+        char name[100] = {0}, phone[100] = {0}, address[200] = {0};
+        sscanf(line, "%[^,],%[^,],%[^\n]", name, phone, address);
+        if (name[0] == '"') { memmove(name, name+1, strlen(name)); name[strlen(name)-1] = '\0'; }
+        if (phone[0] == '"') { memmove(phone, phone+1, strlen(phone)); phone[strlen(phone)-1] = '\0'; }
+        if (address[0] == '"') { memmove(address, address+1, strlen(address)); address[strlen(address)-1] = '\0'; }
+        if (strlen(name) == 0) { failCount++; continue; }
+        if (!isValidPhone(phone)) { failCount++; continue; }
+        if (searchByName(name)) { failCount++; continue; }
+        insertSorted(name, phone, address);
+        successCount++;
+    }
+    fclose(fp);
+    printf("Done! Success: %d, Failed: %d\n", successCount, failCount);
+    if (successCount > 0) { saveToFile(); writeLogSimple("Batch Import", successCount); }
+    pressAnyKey();
+}
+
+void saveToFile() {
+    FILE *fp = fopen(config.dataFile, "wb");
+    if (!fp) return;
+    ContactNode *curr = head;
+    while (curr) { fwrite(curr, sizeof(ContactNode), 1, fp); curr = curr->next; }
+    fclose(fp);
+}
+
+void loadFromFile() {
+    FILE *fp = fopen(config.dataFile, "rb");
+    if (!fp) return;
+    fseek(fp, 0, SEEK_END);
+    long fileSize = ftell(fp);
+    if (fileSize % sizeof(ContactNode) != 0) { fclose(fp); return; }
+    fseek(fp, 0, SEEK_SET);
+    ContactNode temp;
+    while (fread(&temp, sizeof(ContactNode), 1, fp) == 1) {
+        insertSorted(temp.name, temp.phone, temp.address);
+    }
+    fclose(fp);
+}
+
+void freeList() {
+    ContactNode *curr = head;
+    while (curr) {
+        ContactNode *temp = curr;
+        curr = curr->next;
+        free(temp);
+    }
+    head = NULL;
+    contactCount = 0;
+}
+
+int main(){
+loadConfig();
+loadFromFile();
+int choice;
+do{
+clearScreen();
+printclearScreen();
+printf("================================\n");
+        printf("   电话号码簿管理系统 - 链表版\n");
+        printf("================================\n");
+        printf("  1. 添加联系人\n");
+        printf("  2. 查询联系人\n");
+        printf("  3. 删除联系人\n");
+        printf("  4. 显示所有联系人\n");
+        printf("  5. 排序显示\n");
+        printf("  6. 导出CSV文件\n");
+        printf("  7. 批量导入\n");
+        printf("  8. 退出并保存\n");
+        printf("================================\n");
+        printf("当前联系人数量: %d\n", contactCount);
+        printf("请选择操作: ");
+if(scanf("%d",&choice)!=1){
+printf("请输入数字！\n");
+            getchar();
+            getchar();
+            continue;
+        }
+        
+        switch (choice) {
+            case 1: addContact(); break;
+            case 2: searchContact(); break;
+            case 3: deleteContactUI(); break;
+            case 4: displayAll(); break;
+            case 5: 
+                printf("排序方式: 1.按姓名 2.按电话 3.按地址\n");
+                printf("请选择: ");
+                int sortType;
+                scanf("%d", &sortType);
+                displaySorted(sortType);
+                pressAnyKey();
+                break;
+            case 6: exportToCSV(); break;
+            case 7: batchImport(); break;
+            case 8:
+                printf("正在保存数据...\n");
+                saveToFile();
+                printf("感谢使用！\n");
+                break;
+            default:
+                printf("无效选择！\n");
+                pressAnyKey();
+        }
+    } while (choice != 8);
+    
+    freeList();
+    return 0;
+}
